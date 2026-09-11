@@ -4,6 +4,10 @@ from datetime import date
 from pathlib import Path
 import random
 import json
+import os
+import hmac
+import urllib.request
+import urllib.error
 
 # ============================================================
 # RODNEY + MARIAH — OUR LITTLE WORLD
@@ -229,7 +233,7 @@ GIFT_IDEAS = [
 ]
 
 # ============================================================
-# LOCAL STORAGE
+# STORAGE — SUPABASE IN CLOUD, LOCAL JSON AS FALLBACK
 # ============================================================
 
 ROOT = Path(__file__).parent
@@ -244,22 +248,109 @@ DEFAULT_DATA = {
     "custom_timestamps": [],
 }
 
+def _secret(name, default=""):
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return str(os.getenv(name, default))
+
+SUPABASE_URL = _secret("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = _secret("SUPABASE_KEY", "")
+APP_PIN = _secret("APP_PIN", "0319")
+
+def supabase_enabled():
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+def _supabase_request(method, endpoint, payload=None, extra_headers=None):
+    url = f"{SUPABASE_URL}{endpoint}"
+    body = None
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    if extra_headers:
+        headers.update(extra_headers)
+
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+
+    req = urllib.request.Request(
+        url=url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+
+    with urllib.request.urlopen(req, timeout=8) as response:
+        raw = response.read().decode("utf-8")
+        return json.loads(raw) if raw else None
+
+def _merge_defaults(existing):
+    if not isinstance(existing, dict):
+        existing = {}
+
+    merged = json.loads(json.dumps(DEFAULT_DATA))
+    merged.update(existing)
+    merged.setdefault("memory_notes", {})
+    merged.setdefault("next_see_date", "2026-09-30")
+    merged.setdefault("custom_timestamps", [])
+    return merged
+
 def load_data():
+    if supabase_enabled():
+        try:
+            rows = _supabase_request(
+                "GET",
+                "/rest/v1/app_state?key=eq.main&select=value"
+            )
+
+            if rows and isinstance(rows, list) and rows[0].get("value") is not None:
+                return _merge_defaults(rows[0]["value"])
+
+            fresh = _merge_defaults({})
+            save_data(fresh)
+            return fresh
+        except Exception:
+            pass
+
     if not DATA_FILE.exists():
-        DATA_FILE.write_text(json.dumps(DEFAULT_DATA, indent=2), encoding="utf-8")
+        DATA_FILE.write_text(
+            json.dumps(DEFAULT_DATA, indent=2),
+            encoding="utf-8",
+        )
         return json.loads(json.dumps(DEFAULT_DATA))
 
     try:
         existing = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-        existing.setdefault("memory_notes", {})
-        existing.setdefault("next_see_date", "2026-09-30")
-        existing.setdefault("custom_timestamps", [])
-        return existing
+        return _merge_defaults(existing)
     except Exception:
         return json.loads(json.dumps(DEFAULT_DATA))
 
 def save_data(data):
-    DATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    if supabase_enabled():
+        try:
+            _supabase_request(
+                "POST",
+                "/rest/v1/app_state?on_conflict=key",
+                payload={
+                    "key": "main",
+                    "value": data,
+                },
+                extra_headers={
+                    "Prefer": "resolution=merge-duplicates,return=minimal"
+                },
+            )
+            return
+        except Exception:
+            pass
+
+    DATA_FILE.write_text(
+        json.dumps(data, indent=2),
+        encoding="utf-8",
+    )
 
 data = load_data()
 
@@ -596,10 +687,155 @@ div.stButton > button {
     position: relative;
 }
 
+
+.pin-shell {
+    max-width: 580px;
+    margin: 8vh auto 0 auto;
+    padding: 0 1rem;
+}
+
+.pin-card {
+    position: relative;
+    background:
+        radial-gradient(circle at 85% 10%, rgba(167,179,154,.22), transparent 28%),
+        #F8F7F2;
+    border: 1px solid rgba(23,24,23,.12);
+    border-radius: 18px;
+    padding: 54px 48px 44px 48px;
+    box-shadow: 0 25px 70px rgba(20,20,20,.12);
+    text-align: center;
+}
+
+.pin-couple {
+    font-size: 2.5rem;
+    margin-bottom: 18px;
+}
+
+.pin-kicker {
+    text-transform: uppercase;
+    letter-spacing: .28em;
+    font-size: .68rem;
+    opacity: .48;
+    margin-bottom: 10px;
+}
+
+.pin-title {
+    font-family: Georgia, serif;
+    font-size: 3.35rem;
+    line-height: .98;
+    margin-bottom: 14px;
+}
+
+.pin-copy {
+    max-width: 390px;
+    margin: 0 auto;
+    opacity: .62;
+    line-height: 1.6;
+}
+
+.pin-heartline {
+    margin-top: 26px;
+    letter-spacing: .45em;
+    opacity: .36;
+    font-size: .8rem;
+}
+
+.pin-hint {
+    text-align: center;
+    opacity: .45;
+    font-size: .78rem;
+    margin-top: 16px;
+}
+
+div[data-testid="stTextInput"] input[type="password"] {
+    text-align: center;
+    letter-spacing: .45em;
+    font-size: 1.35rem;
+    height: 3.3rem;
+    border-radius: 9px;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+
+# ============================================================
+# PIN GATE
+# ============================================================
+
+def pin_gate():
+    if st.session_state.get("authenticated", False):
+        return
+
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] { display: none; }
+            [data-testid="collapsedControl"] { display: none; }
+            .block-container {
+                max-width: 760px !important;
+                padding-top: 1rem !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="pin-shell">
+            <div class="pin-card">
+                <div class="pin-couple">👫</div>
+                <div class="pin-kicker">Rodney × Mariah</div>
+                <div class="pin-title">Our Little World.</div>
+                <div class="pin-copy">
+                    A tiny private corner made for two people.
+                    Enter the code to come inside.
+                </div>
+                <div class="pin-heartline">♥ · ♥ · ♥</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.write("")
+
+    entered_pin = st.text_input(
+        "PIN",
+        type="password",
+        max_chars=12,
+        placeholder="••••",
+        label_visibility="collapsed",
+        key="pin_input",
+    )
+
+    left, center, right = st.columns([1, 1.25, 1])
+
+    with center:
+        unlock = st.button(
+            "Enter our world",
+            use_container_width=True,
+            key="unlock_button",
+        )
+
+    if unlock:
+        if hmac.compare_digest(str(entered_pin), str(APP_PIN)):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("That isn't our code 🤍")
+
+    st.markdown(
+        '<div class="pin-hint">private by design · made with love</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.stop()
+
+pin_gate()
 
 # ============================================================
 # SIDEBAR
@@ -618,6 +854,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("Rodney × Mariah")
+
+    if st.button("Lock", use_container_width=True, key="lock_app"):
+        st.session_state.authenticated = False
+        st.rerun()
 
 # ============================================================
 # HOME
@@ -1030,16 +1270,5 @@ elif page == "Mariah":
     with tabs[4]:
         for item in PROFILE["Remember"]:
             st.markdown(f"- {item}")
-
-        st.markdown("### Current birthday clue")
-        st.markdown(
-            """
-            <div class="sage-card">
-                Mid-century modern black lamp with stainless-steel details.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
 st.markdown("---")
 st.caption("Rodney × Mariah")
