@@ -256,7 +256,7 @@ def _secret(name, default=""):
 
 SUPABASE_URL = _secret("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = _secret("SUPABASE_KEY", "")
-APP_PIN = _secret("APP_PIN", "0319")
+APP_PIN = _secret("APP_PIN", "1001")
 
 def supabase_enabled():
     return bool(SUPABASE_URL and SUPABASE_KEY)
