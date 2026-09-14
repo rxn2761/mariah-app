@@ -29,7 +29,7 @@ YOUR_NAME = "Rodney"
 HER_NAME = "Mariah"
 HER_FULL_NAME = "Mariah Lizette Duenez"
 
-ANNIVERSARY = (3, 19)
+ANNIVERSARY = (10, 1)
 HER_BIRTHDAY = (11, 5)
 
 MILESTONES = [
@@ -968,7 +968,7 @@ if page == "Home":
             """
             <div class="card">
                 <div class="profile-label">Anniversary</div>
-                <b>March 19, 2026</b>
+                <b>October 1, 2026</b>
                 <br><br>
                 <div class="profile-label">Her birthday</div>
                 <b>November 05, 2005</b>
